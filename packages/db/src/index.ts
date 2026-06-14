@@ -10,7 +10,13 @@ import * as schema from './schema.js'
 
 const connectionString = process.env.DATABASE_URL!
 
-const client = postgres(connectionString, { max: 10 })
+// Transaction pooler (Supabase/pgbouncer) requires prepare:false and explicit search_path
+const isPooler = connectionString.includes('.pooler.supabase.com')
+const client = postgres(connectionString, {
+  max: 10,
+  prepare: !isPooler,
+  ...(isPooler ? { connection: { search_path: 'public' } } : {}),
+})
 
 export const db = drizzle(client, { schema })
 
