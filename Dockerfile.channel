@@ -12,8 +12,6 @@ RUN pnpm install --frozen-lockfile
 COPY packages/ ./packages/
 COPY apps/channel-stub/ ./apps/channel-stub/
 
-RUN pnpm --filter @xeno/channel-stub build
-
 ENV NODE_ENV=production
 EXPOSE 3001
-CMD ["node", "apps/channel-stub/dist/index.js"]
+CMD ["npx", "tsx", "apps/channel-stub/src/index.ts"]

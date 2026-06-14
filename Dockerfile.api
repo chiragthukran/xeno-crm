@@ -13,8 +13,6 @@ RUN pnpm install --frozen-lockfile
 COPY packages/ ./packages/
 COPY apps/crm-api/ ./apps/crm-api/
 
-RUN pnpm --filter @xeno/crm-api build
-
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["node", "apps/crm-api/dist/index.js"]
+CMD ["npx", "tsx", "apps/crm-api/src/index.ts"]
