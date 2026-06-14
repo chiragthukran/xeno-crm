@@ -1,8 +1,8 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000'
 
-async function req<T>(path: string, options?: RequestInit): Promise<T> {
+async function req<T>(path: string, options?: RequestInit, timeoutMs = 10000): Promise<T> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10000)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(`${BASE}${path}`, {
       headers: { 'Content-Type': 'application/json' },
@@ -54,7 +54,7 @@ export const api = {
   frequencyCaps:    ()                => req<any[]>('/admin/frequency-caps'),
   updateFreqCap:    (body: any)       => req<any>('/admin/frequency-caps', { method: 'PUT', body: JSON.stringify(body) }),
 
-  // AI Agent
+  // AI Agent — long timeout: Gemini agentic loop with tool calls takes 15–30s
   chat:             (message: string, sessionId: string) =>
-    req<{ response: string; toolCalls: any[] }>('/ai/chat', { method: 'POST', body: JSON.stringify({ message, sessionId }) }),
+    req<{ response: string; toolCalls: any[] }>('/ai/chat', { method: 'POST', body: JSON.stringify({ message, sessionId }) }, 60000),
 }
