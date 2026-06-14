@@ -8,7 +8,7 @@ COPY packages/types/package.json ./packages/types/
 COPY packages/logger/package.json ./packages/logger/
 COPY apps/crm-api/package.json ./apps/crm-api/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 COPY packages/ ./packages/
 COPY apps/crm-api/ ./apps/crm-api/
