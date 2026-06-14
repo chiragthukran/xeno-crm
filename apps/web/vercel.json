@@ -1,0 +1,6 @@
+{
+  "installCommand": "cd ../.. && npx pnpm@10 install --no-frozen-lockfile",
+  "buildCommand": "cd ../.. && npx pnpm@10 --filter @xeno/web build",
+  "outputDirectory": ".next",
+  "framework": "nextjs"
+}

@@ -1,0 +1,5 @@
+{
+  "installCommand": "npx pnpm@10 install --no-frozen-lockfile",
+  "buildCommand": "npx pnpm@10 --filter @xeno/web build",
+  "outputDirectory": "apps/web/.next"
+}
