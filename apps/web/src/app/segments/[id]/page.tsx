@@ -11,13 +11,13 @@ export default function SegmentDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    Promise.all([
-      api.segment(id),
-      api.segmentCustomers(id),
-    ]).then(([seg, custs]) => {
-      setSegment(seg)
-      setCustomers(custs)
-    }).catch(() => {}).finally(() => setLoading(false))
+    api.segment(id)
+      .then(seg => {
+        setSegment(seg)
+        api.segmentCustomers(id).then(setCustomers).catch(() => {})
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }, [id])
 
   if (loading) return <div className="p-8 font-body">Loading...</div>
