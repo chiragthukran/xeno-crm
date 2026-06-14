@@ -79,31 +79,71 @@ A mini CRM for a fashion brand. Marketers can browse customers, build audience s
 
 ---
 
-## How the AI Copilot Works
+## Architecture
 
-The copilot is a real agentic loop — not a chatbot that just talks.
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Browser  (Next.js 15 · Vercel)                    │
+│         Dashboard · Copilot · Segments · Campaigns · Admin           │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │  REST / JSON
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                   CRM API  (Fastify v5 · Railway)                    │
+│                                                                       │
+│  ┌────────────┐  ┌──────────────┐  ┌───────────────┐  ┌──────────┐ │
+│  │  Customers │  │   Segments   │  │   Campaigns   │  │ AI Agent │ │
+│  │  Analytics │  │  Filter/NL   │  │ State Machine │  │ Gemini   │ │
+│  └────────────┘  └──────────────┘  └───────┬───────┘  └──────────┘ │
+│                                             │ Launch                  │
+│                                    ┌────────▼────────┐               │
+│                                    │  outbox_events  │  PostgreSQL   │
+│                                    │  (write here    │  (Supabase    │
+│                                    │   first, not    │   PgBouncer   │
+│                                    │   to Redis)     │   pooler)     │
+│                                    └────────┬────────┘               │
+└─────────────────────────────────────────────┼───────────────────────┘
+                                              │  Outbox poller
+                               ┌──────────────▼──────────────┐
+                               │    Upstash Redis (BullMQ)    │
+                               │                              │
+                               │  ┌─────────────────────┐    │
+                               │  │  campaign-delivery   │    │
+                               │  │  concurrency: 10     │    │
+                               │  │  retries: 3 (expo)   │    │
+                               │  └──────────┬──────────┘    │
+                               │             │                │
+                               │  ┌──────────▼──────────┐    │
+                               │  │    ai-insights       │    │
+                               │  │    concurrency: 2    │    │
+                               │  └─────────────────────┘    │
+                               └──────────────┬───────────────┘
+                                              │  Send job
+                               ┌──────────────▼──────────────┐
+                               │  Channel Stub  (Railway)     │
+                               │                              │
+                               │  WhatsApp · SMS · Email      │
+                               │  Probabilistic delivery FSM  │
+                               │  P(delivered) = 0.92         │
+                               │  P(opened)    = 0.45         │
+                               │  P(clicked)   = 0.30         │
+                               └──────────────┬───────────────┘
+                                              │  /receipt callback (HMAC signed)
+                               ┌──────────────▼──────────────┐
+                               │  CRM API receipt endpoint    │
+                               │  → verify HMAC signature     │
+                               │  → check idempotency key     │
+                               │  → increment campaign_stats  │
+                               │  → append to events log      │
+                               └─────────────────────────────┘
+```
 
-1. User types a goal: *"Re-engage our dormant high-value customers"*
-2. Gemini decides which tools to call
-3. It calls **build_segment** → finds 98 matching customers
-4. It calls **simulate_campaign** → predicts 18% conversion, ₹2.1L revenue
-5. It calls **create_campaign** → writes a DRAFT to the database
-6. It returns a Campaign Proposal card with an **Approve & Launch** button
-7. Guardrails run automatically: suppressed customers removed, frequency caps checked, overlap flagged
-
-The marketer approves. The AI never launches without human sign-off.
-
-**7 tools available to the AI:**
-
-| Tool | What it does |
-|---|---|
-| `build_segment` | Natural language → filter rules → audience preview → save |
-| `get_customer_insights` | Pulls churn risk, dormant high-value customers, engagement scores |
-| `simulate_campaign` | Predicts open rate, click rate, revenue by channel |
-| `create_campaign` | Creates a DRAFT — never launches automatically |
-| `get_campaign_stats` | Live stats for any existing campaign |
-| `list_segments` | Lists all segments to avoid duplicates |
-| `recommend_next_action` | Surfaces top 3 opportunities with estimated ₹ impact |
+**Campaign lifecycle states:**
+```
+DRAFT → VALIDATING → APPROVED → QUEUED → RUNNING → COMPLETED
+                                       ↘ PAUSED  ↗
+                   (any state) → CANCELLED / FAILED → DRAFT (retry)
+```
 
 ---
 
@@ -115,10 +155,6 @@ Most take-home CRMs are basic CRUD apps. This one is built for production proble
 
 Campaign delivery is never synchronous. When a marketer hits Launch, the API writes jobs to a **BullMQ queue backed by Upstash Redis**. Workers pick them up with concurrency 10 — meaning 10 messages send in parallel per worker instance. Add more workers to scale horizontally.
 
-```
-Launch button → outbox_events table → BullMQ (Redis) → 10 workers → Channel Stub
-```
-
 Each job has **3 automatic retries** with exponential backoff (2s → 4s → 8s). After all retries fail, the job moves to a **Dead Letter Queue** table — visible in the Admin panel for manual inspection and re-queue.
 
 ---
@@ -127,17 +163,17 @@ Each job has **3 automatic retries** with exponential backoff (2s → 4s → 8s)
 
 The biggest failure risk in async systems: you write to Redis, Redis crashes, the job is gone forever. The **Transactional Outbox** fixes this.
 
-On launch, we write to `outbox_events` (PostgreSQL) **not** directly to BullMQ. A poller runs every second, reads unpublished rows, and flushes them to the queue:
+On launch, we write to `outbox_events` (PostgreSQL) **not** directly to BullMQ. A poller reads unpublished rows and flushes them to the queue:
 
 ```sql
 SELECT * FROM outbox_events
 WHERE published_at IS NULL
 ORDER BY created_at
 LIMIT 10
-FOR UPDATE SKIP LOCKED  -- safe for multiple worker instances
+FOR UPDATE SKIP LOCKED  -- safe for multiple worker instances running in parallel
 ```
 
-`FOR UPDATE SKIP LOCKED` means two worker instances can run simultaneously without picking up the same row. If Redis goes down after the row is written but before it's published, the next poll cycle retries it. **No message is ever lost.**
+If Redis goes down after the row is written but before it's published, the next poll cycle retries it automatically. **No message is ever lost.**
 
 ---
 
@@ -145,7 +181,7 @@ FOR UPDATE SKIP LOCKED  -- safe for multiple worker instances
 
 BullMQ retries create a new risk: the job succeeds but the network drops before Redis gets the acknowledgement. BullMQ retries it — the customer gets the message twice.
 
-Every send job gets a SHA256 key: `hash(campaign_id + customer_id)`. Before sending, we check:
+Every send job gets a SHA256 key: `hash(campaign_id + customer_id)`. Before sending:
 
 ```typescript
 await db.insert(processedEvents)
@@ -155,7 +191,7 @@ await db.insert(processedEvents)
 // empty result = already processed = skip
 ```
 
-A retry that reaches an already-processed key exits immediately. **Customers can never receive the same campaign message twice.**
+A retry that hits an already-processed key exits immediately. **Customers can never receive the same campaign message twice.**
 
 ---
 
@@ -168,29 +204,25 @@ Two completely separate BullMQ queues, each with their own Redis connection and 
 | `campaign-delivery` | 10 | Sending messages to customers |
 | `ai-insights` | 2 | Background AI enrichment jobs |
 
-Why separate connections? BullMQ uses blocking Redis commands internally. Sharing one connection between two workers causes them to block each other. Separate connections = separate throughput.
-
-If 50,000 delivery jobs are queued during a big campaign, the AI insight queue still runs at full speed. One cannot starve the other. This is the **Bulkhead pattern** from resilience engineering.
+If 50,000 delivery jobs are queued during a big campaign, the AI insight queue still runs at full speed. One cannot starve the other.
 
 ---
 
 ### Pre-aggregated Stats — no slow COUNT(*) queries
 
-Every delivery receipt (delivered, opened, clicked) increments a counter in `campaign_stats` atomically:
+Every delivery receipt increments a counter in `campaign_stats` atomically:
 
 ```sql
-UPDATE campaign_stats
-SET delivered_count = delivered_count + 1
-WHERE campaign_id = $1
+UPDATE campaign_stats SET delivered_count = delivered_count + 1 WHERE campaign_id = $1
 ```
 
-The dashboard and campaign detail page read directly from this table — no `COUNT(*)`, no `GROUP BY`, no joins. The read query is always `O(1)` regardless of how many events have fired.
+Dashboard and campaign detail pages read directly from this table — no `COUNT(*)`, no `GROUP BY`, no joins. Read is always `O(1)` regardless of how many events have fired.
 
 ---
 
 ### Supabase Connection Pooler — handles traffic spikes
 
-PostgreSQL has a hard limit on concurrent connections (~100 by default). Without pooling, a traffic spike from concurrent campaign workers exhausts connections and crashes the DB.
+PostgreSQL has a hard limit on concurrent connections. Without pooling, a spike from 10 concurrent campaign workers exhausts connections and crashes the DB.
 
 We connect through Supabase's **PgBouncer transaction pooler** (port 6543). Hundreds of worker requests share a small pool of real DB connections. The DB never sees more connections than it can handle.
 
@@ -198,51 +230,49 @@ We connect through Supabase's **PgBouncer transaction pooler** (port 6543). Hund
 
 ### HMAC Webhook Verification — secure receipts
 
-The channel stub calls back to `/communications/receipt` with delivery events. Anyone who knows the URL could fake events and inflate stats.
+The channel stub signs every callback body with HMAC-SHA256. The receipt endpoint verifies it using `timingSafeEqual` — not `===`.
 
-The channel stub signs every callback body with HMAC-SHA256 using a shared secret. The receipt endpoint verifies it using `timingSafeEqual` — not `===`. Regular string comparison exits early on the first mismatched byte, leaking timing information that attackers can use to forge signatures. `timingSafeEqual` always takes the same time regardless of where strings differ.
+Regular string comparison exits early on the first mismatched byte, leaking timing information that attackers use to forge signatures byte-by-byte. `timingSafeEqual` always takes the same time regardless of where strings differ.
 
 ---
 
 ### Correlation IDs — trace any message end-to-end
 
-Every HTTP request into the system gets a `x-correlation-id` header. This ID travels through:
+Every HTTP request gets a `x-correlation-id` header that travels through the entire system:
 
 ```
 HTTP request → BullMQ job payload → Channel Stub → /receipt callback → event log
 ```
 
-Every log line from every service includes it. To trace what happened to one specific message, `grep correlationId=abc123` across all three service logs reconstructs the complete journey.
+`grep correlationId=abc123` across all three service logs reconstructs the complete journey of one message.
 
 ---
 
-## System Architecture
+## How the AI Copilot Works
 
-```
-Browser (Next.js on Vercel)
-        │
-        │ HTTP
-        ▼
-CRM API (Fastify on Railway)
-        │
-        ├── PostgreSQL (Supabase) — customers, segments, campaigns, events
-        ├── Upstash Redis — BullMQ job queues
-        │
-        ▼
-Campaign Worker (BullMQ, concurrency 10)
-        │
-        ▼
-Channel Stub (Railway) — simulates WhatsApp / SMS / Email
-        │
-        └── fires /receipt callback → CRM API increments campaign stats
-```
+The copilot is a real agentic loop — not a chatbot that just talks.
 
-**Key patterns used:**
+1. User types: *"Re-engage our dormant high-value customers"*
+2. Gemini decides which tools to call
+3. Calls **build_segment** → finds 98 matching customers in the DB
+4. Calls **simulate_campaign** → predicts 18% conversion, ₹2.1L revenue
+5. Calls **create_campaign** → writes a DRAFT record to the database
+6. Returns a Campaign Proposal card with **Approve & Launch**
+7. Guardrails ran automatically: suppressed customers removed, frequency caps checked, overlap flagged
 
-- **Outbox pattern** — launch writes to `outbox_events` table first, a poller flushes to BullMQ. Jobs survive Redis restarts.
-- **Idempotency** — every send job has a SHA256 key. Retries hit `ON CONFLICT DO NOTHING` — no double sends.
-- **Bulkhead** — delivery queue and AI queue are completely separate with their own Redis connections and concurrency limits. One can't starve the other.
-- **State machine** — campaigns move through `DRAFT → QUEUED → RUNNING → COMPLETED`. Invalid transitions are rejected.
+The marketer approves. The AI never launches without human sign-off.
+
+**7 tools available to the AI:**
+
+| Tool | What it does |
+|---|---|
+| `build_segment` | Natural language → filter rules → audience preview → save |
+| `get_customer_insights` | Pulls churn risk, dormant high-value customers, engagement scores |
+| `simulate_campaign` | Predicts open rate, click rate, revenue by channel |
+| `create_campaign` | Creates a DRAFT — never launches automatically |
+| `get_campaign_stats` | Live stats for any existing campaign |
+| `list_segments` | Lists all segments to avoid creating duplicates |
+| `recommend_next_action` | Surfaces top 3 opportunities with estimated ₹ impact |
 
 ---
 
@@ -293,37 +323,28 @@ git clone https://github.com/chiragthukran/xeno-crm
 cd xeno-crm
 pnpm install
 
-# Set up environment
 cp .env.example .env
 # Edit .env with your DATABASE_URL and REDIS_URL
 
-# Push schema to database
-pnpm db:push
-
-# Seed demo data (500 customers, 4 campaigns, 5 segments)
-pnpm db:seed
+pnpm db:push   # push schema
+pnpm db:seed   # seed 500 customers, 4 campaigns, 5 segments
 ```
 
 Start services (3 terminals):
 
 ```bash
-# Terminal 1 — API
-cd apps/crm-api && pnpm dev
-
-# Terminal 2 — Channel simulator
-cd apps/channel-stub && pnpm dev
-
-# Terminal 3 — Web UI
-cd apps/web && pnpm dev
+cd apps/crm-api    && pnpm dev   # :3000
+cd apps/channel-stub && pnpm dev  # :3001
+cd apps/web        && pnpm dev   # :3002
 ```
 
 Open `http://localhost:3002`
 
-**Try this demo flow:**
-1. Go to **Copilot** → type *"Re-engage our dormant high-value customers"*
-2. Watch the AI build the segment, run simulation, check guardrails, draft the campaign
+**Try this:**
+1. Copilot → *"Re-engage our dormant high-value customers"*
+2. Watch AI build segment → simulate → draft campaign
 3. Click **Approve & Launch**
-4. Open the campaign detail page — watch events stream in live
+4. Open campaign detail — watch events stream in live
 
 ---
 
