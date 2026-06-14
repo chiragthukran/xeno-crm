@@ -15,7 +15,7 @@ import { campaignWorker } from './workers/campaign.worker.js'
 import { startOutboxWorker } from './workers/outbox.worker.js'
 
 const log = createLogger('crm-api')
-const PORT = Number(process.env.CRM_API_PORT ?? 3000)
+const PORT = Number(process.env.PORT ?? process.env.CRM_API_PORT ?? 3000)
 
 async function bootstrap() {
   const app = Fastify({ logger: false })

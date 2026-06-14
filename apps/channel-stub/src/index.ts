@@ -7,7 +7,7 @@ import { createLogger } from '@xeno/logger'
 import { simulateDelivery } from './state-machine.js'
 
 const log = createLogger('channel-stub')
-const PORT = Number(process.env.CHANNEL_STUB_PORT ?? 3001)
+const PORT = Number(process.env.PORT ?? process.env.CHANNEL_STUB_PORT ?? 3001)
 const CRM_RECEIPT_URL = process.env.CRM_RECEIPT_URL ?? 'http://localhost:3000'
 const SECRET = process.env.CHANNEL_HMAC_SECRET ?? 'dev-secret'
 
