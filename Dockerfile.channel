@@ -1,0 +1,19 @@
+FROM node:20-slim
+WORKDIR /app
+RUN npm install -g pnpm@10
+
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY packages/types/package.json ./packages/types/
+COPY packages/logger/package.json ./packages/logger/
+COPY apps/channel-stub/package.json ./apps/channel-stub/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/ ./packages/
+COPY apps/channel-stub/ ./apps/channel-stub/
+
+RUN pnpm --filter @xeno/channel-stub build
+
+ENV NODE_ENV=production
+EXPOSE 3001
+CMD ["node", "apps/channel-stub/dist/index.js"]

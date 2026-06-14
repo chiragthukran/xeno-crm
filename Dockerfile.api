@@ -1,0 +1,20 @@
+FROM node:20-slim
+WORKDIR /app
+RUN npm install -g pnpm@10
+
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY packages/db/package.json ./packages/db/
+COPY packages/types/package.json ./packages/types/
+COPY packages/logger/package.json ./packages/logger/
+COPY apps/crm-api/package.json ./apps/crm-api/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/ ./packages/
+COPY apps/crm-api/ ./apps/crm-api/
+
+RUN pnpm --filter @xeno/crm-api build
+
+ENV NODE_ENV=production
+EXPOSE 3000
+CMD ["node", "apps/crm-api/dist/index.js"]
