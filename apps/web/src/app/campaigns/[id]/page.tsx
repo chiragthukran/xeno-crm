@@ -29,11 +29,11 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const s = data.stats
 
   const funnelSteps = [
-    { label: 'SENT',      value: s?.sent_count ?? 0,      pct: null },
-    { label: 'DELIVERED', value: s?.delivered_count ?? 0,  pct: s?.sent_count ? Math.round((s.delivered_count/s.sent_count)*100) : 0 },
-    { label: 'OPENED',    value: s?.opened_count ?? 0,     pct: s?.delivered_count ? Math.round((s.opened_count/s.delivered_count)*100) : 0 },
-    { label: 'CLICKED',   value: s?.clicked_count ?? 0,    pct: s?.opened_count ? Math.round((s.clicked_count/s.opened_count)*100) : 0 },
-    { label: 'PURCHASED', value: Math.floor((s?.clicked_count ?? 0) * 0.36), pct: 36 },
+    { label: 'SENT',      value: s?.sentCount ?? 0,      pct: null },
+    { label: 'DELIVERED', value: s?.deliveredCount ?? 0,  pct: s?.sentCount ? Math.round((s.deliveredCount/s.sentCount)*100) : 0 },
+    { label: 'OPENED',    value: s?.openedCount ?? 0,     pct: s?.deliveredCount ? Math.round((s.openedCount/s.deliveredCount)*100) : 0 },
+    { label: 'CLICKED',   value: s?.clickedCount ?? 0,    pct: s?.openedCount ? Math.round((s.clickedCount/s.openedCount)*100) : 0 },
+    { label: 'PURCHASED', value: Math.floor((s?.clickedCount ?? 0) * 0.36), pct: 36 },
   ]
 
   return (
@@ -48,7 +48,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
       <div className="bg-lime border-3 border-black shadow-hard p-8 mb-6 relative overflow-hidden">
         <div className="text-xs font-headline font-bold uppercase tracking-widest mb-2">Total Revenue Generated</div>
         <div className="font-headline font-black text-6xl">₹{Number(s?.revenue_generated ?? 0).toLocaleString()}</div>
-        {s?.sent_count && s.revenue_generated > 0 ? (
+        {s?.sentCount && s.revenueGenerated > 0 ? (
           <div className="mt-2 border-2 border-black bg-white inline-flex items-center gap-1 px-3 py-1 text-sm font-bold">
             ↗ +24% vs. target
           </div>

@@ -1,7 +1,8 @@
 'use client'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { api } from '@/lib/api'
-import { Bot, Send, ChevronDown, ChevronRight, Zap, Shield, Users } from 'lucide-react'
+import { Bot, Send, ChevronDown, ChevronRight, Zap, Shield } from 'lucide-react'
 
 const SESSION_ID = `copilot-${Math.random().toString(36).slice(2)}`
 
@@ -36,6 +37,15 @@ function ToolCallCard({ call }: { call: { tool: string; input: any; result: any 
         </div>
       )}
     </div>
+    </>
+  )
+}
+
+export default function CopilotPage() {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center font-body">Loading...</div>}>
+      <CopilotInner />
+    </Suspense>
   )
 }
 
@@ -130,16 +140,24 @@ function CampaignProposalCard({ toolCalls }: { toolCalls: any[] }) {
   )
 }
 
-export default function CopilotPage() {
+function CopilotInner() {
+  const searchParams = useSearchParams()
+  const prefill = searchParams.get('prompt') ?? ''
+
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: "Hi! I'm your Campaign Copilot. Tell me your marketing goal and I'll build the segment, draft the message, and set up the campaign for you.\n\nTry: \"Re-engage our high-value customers who haven't bought in 45 days\" or \"What should I do next?\"",
+      content: "Hi! I'm your Campaign Copilot. Tell me your marketing goal and I'll build the segment, simulate performance, run guardrail checks, and set up the campaign for your approval.\n\nTry: \"Re-engage our dormant high-value customers\" or \"What should I do next?\"",
     },
   ])
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(prefill)
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef  = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (prefill) inputRef.current?.focus()
+  }, [prefill])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -165,6 +183,7 @@ export default function CopilotPage() {
   const allToolCalls = messages.flatMap(m => m.toolCalls ?? [])
 
   return (
+    <>
     <div className="flex h-screen overflow-hidden">
       {/* Chat panel */}
       <div className="flex-1 flex flex-col">
@@ -210,6 +229,7 @@ export default function CopilotPage() {
         {/* Input */}
         <div className="border-t-3 border-black p-4 bg-white flex gap-3">
           <input
+            ref={inputRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
@@ -253,5 +273,14 @@ export default function CopilotPage() {
         </div>
       )}
     </div>
+    </>
+  )
+}
+
+export default function CopilotPage() {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center font-body">Loading...</div>}>
+      <CopilotInner />
+    </Suspense>
   )
 }

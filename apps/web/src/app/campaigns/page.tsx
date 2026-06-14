@@ -16,11 +16,11 @@ const STATUS_COLORS: Record<string, string> = {
 function FunnelRow({ stats }: { stats: any }) {
   if (!stats) return null
   const steps = [
-    { label: 'SENT',      value: stats.sent_count },
-    { label: 'DELIVERED', value: stats.delivered_count },
-    { label: 'OPENED',    value: stats.opened_count },
-    { label: 'CLICKED',   value: stats.clicked_count },
-    { label: 'PURCHASED', value: Math.floor(stats.clicked_count * 0.36), highlight: true },
+    { label: 'SENT',      value: stats.sentCount },
+    { label: 'DELIVERED', value: stats.deliveredCount },
+    { label: 'OPENED',    value: stats.openedCount },
+    { label: 'CLICKED',   value: stats.clickedCount },
+    { label: 'PURCHASED', value: Math.floor(stats.clickedCount * 0.36), highlight: true },
   ]
   return (
     <div className="flex items-center gap-2 mt-2 flex-wrap">
