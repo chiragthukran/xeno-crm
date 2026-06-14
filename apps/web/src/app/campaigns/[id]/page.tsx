@@ -48,7 +48,7 @@ export default function CampaignDetailPage({ params }: { params: Promise<{ id: s
       {/* Revenue hero */}
       <div className="bg-lime border-3 border-black shadow-hard p-8 mb-6 relative overflow-hidden">
         <div className="text-xs font-headline font-bold uppercase tracking-widest mb-2">Total Revenue Generated</div>
-        <div className="font-headline font-black text-6xl">₹{Number(s?.revenue_generated ?? 0).toLocaleString()}</div>
+        <div className="font-headline font-black text-6xl">₹{Number(s?.revenueGenerated ?? 0).toLocaleString()}</div>
         {s?.sentCount && s.revenueGenerated > 0 ? (
           <div className="mt-2 border-2 border-black bg-white inline-flex items-center gap-1 px-3 py-1 text-sm font-bold">
             ↗ +24% vs. target
