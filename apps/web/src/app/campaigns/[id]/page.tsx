@@ -1,20 +1,21 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, use } from 'react'
 import { api } from '@/lib/api'
 import { ArrowRight } from 'lucide-react'
 
-export default function CampaignDetailPage({ params }: { params: { id: string } }) {
+export default function CampaignDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   const [data, setData] = useState<any>(null)
   const [events, setEvents] = useState<any[]>([])
 
   const loadData = useCallback(async () => {
     const [camp, evts] = await Promise.all([
-      api.campaign(params.id),
-      api.campaignEvents(params.id),
+      api.campaign(id),
+      api.campaignEvents(id),
     ])
     setData(camp)
     setEvents(evts)
-  }, [params.id])
+  }, [id])
 
   useEffect(() => {
     loadData()
