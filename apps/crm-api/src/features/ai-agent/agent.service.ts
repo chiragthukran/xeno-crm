@@ -127,7 +127,7 @@ async function buildSegment(nlQuery: string, segmentName: string) {
       filterRules = { operator: 'AND', conditions: [{ field: 'lifetime_value', op: 'gt', value: 1000 }] }
     }
   } else {
-    const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash' })
+    const model = gemini.getGenerativeModel({ model: 'gemini-flash-latest' })
     const prompt = `You are a CRM expert. Convert this natural language segment query into structured filter rules.
 
 Query: "${nlQuery}"
@@ -341,7 +341,7 @@ export async function runAgent(sessionId: string, userMessage: string): Promise<
 
   // Production mode: Gemini 2.0 Flash with function calling
   const model = gemini!.getGenerativeModel({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-flash-latest',
     systemInstruction: SYSTEM_PROMPT,
     tools: [{ functionDeclarations: TOOLS }],
   })
@@ -387,7 +387,7 @@ export async function runAgent(sessionId: string, userMessage: string): Promise<
 
   await db.insert(agentConversations).values([
     { sessionId, role: 'user', content: userMessage },
-    { sessionId, role: 'assistant', content: finalText, metadata: { toolCalls: toolCalls.length, model: 'gemini-2.0-flash' } },
+    { sessionId, role: 'assistant', content: finalText, metadata: { toolCalls: toolCalls.length, model: 'gemini-flash-latest' } },
   ])
 
   return { response: finalText, toolCalls }

@@ -23,7 +23,6 @@ function ToolCallCard({ call }: { call: { tool: string; input: any; result: any 
     list_segments:         'Loading Segments',
     recommend_next_action: 'Generating Recommendations',
   }
-
   return (
     <div className="border-2 border-black bg-surface-low my-2 text-sm font-body">
       <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-3 py-2 font-medium hover:bg-surface-low">
@@ -37,22 +36,12 @@ function ToolCallCard({ call }: { call: { tool: string; input: any; result: any 
         </div>
       )}
     </div>
-    </>
-  )
-}
-
-export default function CopilotPage() {
-  return (
-    <Suspense fallback={<div className="flex h-screen items-center justify-center font-body">Loading...</div>}>
-      <CopilotInner />
-    </Suspense>
   )
 }
 
 function GuardrailPanel({ toolCalls }: { toolCalls: Array<{ tool: string; result: any }> }) {
   const validation = toolCalls.find(t => t.tool === 'build_segment')?.result?.preview
   if (!validation) return null
-
   return (
     <div className="bg-lime border-3 border-black shadow-hard p-4">
       <div className="font-headline font-black text-sm mb-3 flex items-center gap-2">
@@ -61,7 +50,7 @@ function GuardrailPanel({ toolCalls }: { toolCalls: Array<{ tool: string; result
       <div className="space-y-2 text-sm font-body">
         <div className="flex justify-between items-center">
           <span>Suppression Lists</span>
-          <span className="font-bold text-red-700">-45 profiles removed</span>
+          <span className="font-bold text-red-700">-5 profiles removed</span>
         </div>
         <div className="flex justify-between items-center">
           <span>Frequency Cap</span>
@@ -77,22 +66,20 @@ function GuardrailPanel({ toolCalls }: { toolCalls: Array<{ tool: string; result
 }
 
 function CampaignProposalCard({ toolCalls }: { toolCalls: any[] }) {
-  const seg = toolCalls.find(t => t.tool === 'build_segment')?.result
-  const sim = toolCalls.find(t => t.tool === 'simulate_campaign')?.result
+  const seg      = toolCalls.find(t => t.tool === 'build_segment')?.result
+  const sim      = toolCalls.find(t => t.tool === 'simulate_campaign')?.result
   const campaign = toolCalls.find(t => t.tool === 'create_campaign')?.result
+  const [launching, setLaunching] = useState(false)
+  const [launched,  setLaunched]  = useState(false)
 
   if (!campaign) return null
-
-  const [launching, setLaunching] = useState(false)
-  const [launched, setLaunched] = useState(false)
 
   const handleLaunch = async () => {
     setLaunching(true)
     try {
       await api.launchCampaign(campaign.id, 'ai_agent')
       setLaunched(true)
-    } catch (e) { /* show error */ }
-    finally { setLaunching(false) }
+    } catch { /* ignore */ } finally { setLaunching(false) }
   }
 
   return (
@@ -124,14 +111,11 @@ function CampaignProposalCard({ toolCalls }: { toolCalls: any[] }) {
       <div className="px-4 pb-4">
         {launched ? (
           <div className="bg-lime border-2 border-black px-4 py-3 font-headline font-black text-center">
-            ✓ Campaign Launched!
+            Campaign Launched!
           </div>
         ) : (
-          <button
-            onClick={handleLaunch}
-            disabled={launching}
-            className="w-full bg-black text-white border-2 border-black shadow-hard px-4 py-3 font-headline font-bold btn-press flex items-center justify-center gap-2 disabled:opacity-50"
-          >
+          <button onClick={handleLaunch} disabled={launching}
+            className="w-full bg-black text-white border-2 border-black shadow-hard px-4 py-3 font-headline font-bold btn-press flex items-center justify-center gap-2 disabled:opacity-50">
             <Zap size={16} fill="white" /> {launching ? 'Launching...' : 'APPROVE & LAUNCH'}
           </button>
         )}
@@ -144,24 +128,17 @@ function CopilotInner() {
   const searchParams = useSearchParams()
   const prefill = searchParams.get('prompt') ?? ''
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      content: "Hi! I'm your Campaign Copilot. Tell me your marketing goal and I'll build the segment, simulate performance, run guardrail checks, and set up the campaign for your approval.\n\nTry: \"Re-engage our dormant high-value customers\" or \"What should I do next?\"",
-    },
-  ])
-  const [input, setInput] = useState(prefill)
+  const [messages, setMessages] = useState<Message[]>([{
+    role: 'assistant',
+    content: "Hi! I'm your Campaign Copilot. Tell me your marketing goal and I'll build the segment, simulate performance, run guardrail checks, and set up the campaign for your approval.\n\nTry: \"Re-engage our dormant high-value customers\" or \"What should I do next?\"",
+  }])
+  const [input,   setInput]   = useState(prefill)
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef  = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    if (prefill) inputRef.current?.focus()
-  }, [prefill])
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  useEffect(() => { if (prefill) inputRef.current?.focus() }, [prefill])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   const send = async () => {
     if (!input.trim() || loading) return
@@ -169,21 +146,17 @@ function CopilotInner() {
     setInput('')
     setMessages(prev => [...prev, { role: 'user', content: userMsg }])
     setLoading(true)
-
     try {
       const result = await api.chat(userMsg, SESSION_ID)
       setMessages(prev => [...prev, { role: 'assistant', content: result.response, toolCalls: result.toolCalls }])
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' }])
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   const allToolCalls = messages.flatMap(m => m.toolCalls ?? [])
 
   return (
-    <>
     <div className="flex h-screen overflow-hidden">
       {/* Chat panel */}
       <div className="flex-1 flex flex-col">
@@ -195,7 +168,6 @@ function CopilotInner() {
           </div>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -226,7 +198,6 @@ function CopilotInner() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
         <div className="border-t-3 border-black p-4 bg-white flex gap-3">
           <input
             ref={inputRef}
@@ -236,11 +207,8 @@ function CopilotInner() {
             placeholder="Describe your campaign goal..."
             className="flex-1 border-2 border-black px-4 py-2.5 font-body text-sm outline-none focus:bg-lime/20"
           />
-          <button
-            onClick={send}
-            disabled={loading || !input.trim()}
-            className="bg-lime border-2 border-black shadow-hard px-4 py-2.5 btn-press disabled:opacity-50"
-          >
+          <button onClick={send} disabled={loading || !input.trim()}
+            className="bg-lime border-2 border-black shadow-hard px-4 py-2.5 btn-press disabled:opacity-50">
             <Send size={16} />
           </button>
         </div>
@@ -249,12 +217,9 @@ function CopilotInner() {
       {/* Guardrail sidebar */}
       {allToolCalls.length > 0 && (
         <div className="w-64 border-l-3 border-black bg-white flex flex-col">
-          <div className="border-b-3 border-black px-4 py-3 font-headline font-black text-sm">
-            Guardrail Check
-          </div>
+          <div className="border-b-3 border-black px-4 py-3 font-headline font-black text-sm">Guardrail Check</div>
           <div className="p-4 space-y-4 overflow-y-auto">
             <GuardrailPanel toolCalls={allToolCalls} />
-
             <div className="border-2 border-black p-3 text-sm font-body">
               <div className="font-bold mb-2">Simulation Details</div>
               {allToolCalls.find(t => t.tool === 'simulate_campaign')?.result && (() => {
@@ -273,7 +238,6 @@ function CopilotInner() {
         </div>
       )}
     </div>
-    </>
   )
 }
 

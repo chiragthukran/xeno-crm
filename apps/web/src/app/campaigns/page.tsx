@@ -121,7 +121,7 @@ export default function CampaignsPage() {
                 <span className="text-sm font-body capitalize w-20">{c.channel}</span>
                 <span className="text-sm font-body w-24 text-right">{seg?.estimatedSize?.toLocaleString() ?? '—'}</span>
                 <span className="text-sm font-bold w-20 text-right">
-                  {s?.sent_count ? `${((s.delivered_count / s.sent_count) * 100).toFixed(1)}%` : '—'}
+                  {s?.sentCount ? `${((s.deliveredCount / s.sentCount) * 100).toFixed(1)}%` : '—'}
                 </span>
                 <button onClick={() => setExpanded(isExpanded ? null : c.id)} className="ml-2 border-2 border-black p-1 hover:bg-surface-low">
                   {isExpanded ? <X size={14}/> : <ArrowRight size={14}/>}
