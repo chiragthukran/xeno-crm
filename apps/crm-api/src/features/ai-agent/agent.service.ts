@@ -7,7 +7,16 @@ import type { CampaignSimulation, NextBestAction } from '@xeno/types'
 
 const log = createLogger('ai-agent')
 const DEMO_MODE = process.env.DEMO_MODE === 'true'
-const gemini = DEMO_MODE ? null : new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
+
+const geminiClients = [
+  process.env.GEMINI_API_KEY,
+  process.env.GEMINI_API_KEY_2,
+].filter(Boolean).map(key => new GoogleGenerativeAI(key!))
+
+function isRateLimit(err: any): boolean {
+  const msg = String(err?.message ?? err ?? '')
+  return msg.includes('429') || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('rate')
+}
 
 const SYSTEM_PROMPT = `You are the Campaign Copilot for Luxe Fashion — an AI marketing agent.
 
@@ -127,7 +136,6 @@ async function buildSegment(nlQuery: string, segmentName: string) {
       filterRules = { operator: 'AND', conditions: [{ field: 'lifetime_value', op: 'gt', value: 1000 }] }
     }
   } else {
-    const model = gemini.getGenerativeModel({ model: 'gemini-flash-latest' })
     const prompt = `You are a CRM expert. Convert this natural language segment query into structured filter rules.
 
 Query: "${nlQuery}"
@@ -151,8 +159,21 @@ Respond ONLY with a JSON object:
 
 Patterns: "high value"=lifetime_value>5000, "dormant"=days_ago_gt 30-90, "loyal"=total_orders>=3, "VIP"=tags contains vip`
 
-    const result = await model.generateContent(prompt)
-    const text = result.response.text()
+    let text = ''
+    for (let i = 0; i < geminiClients.length; i++) {
+      try {
+        const model = geminiClients[i]!.getGenerativeModel({ model: 'gemini-flash-latest' })
+        const result = await model.generateContent(prompt)
+        text = result.response.text()
+        break
+      } catch (err) {
+        if (isRateLimit(err) && i < geminiClients.length - 1) {
+          log.warn({ keyIndex: i }, 'Gemini rate limit hit, switching to fallback key')
+          continue
+        }
+        throw err
+      }
+    }
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     filterRules = jsonMatch ? JSON.parse(jsonMatch[0]) : { operator: 'AND', conditions: [] }
   }
@@ -329,7 +350,7 @@ export async function runAgent(sessionId: string, userMessage: string): Promise<
   response: string
   toolCalls: Array<{ tool: string; input: any; result: any }>
 }> {
-  if (DEMO_MODE || !process.env.GEMINI_API_KEY) {
+  if (DEMO_MODE || geminiClients.length === 0) {
     log.info({ sessionId, DEMO_MODE }, 'Running in demo mode')
     const result = await runDemoAgent(userMessage)
     await db.insert(agentConversations).values([
@@ -339,14 +360,7 @@ export async function runAgent(sessionId: string, userMessage: string): Promise<
     return result
   }
 
-  // Production mode: Gemini 2.0 Flash with function calling
-  const model = gemini!.getGenerativeModel({
-    model: 'gemini-flash-latest',
-    systemInstruction: SYSTEM_PROMPT,
-    tools: [{ functionDeclarations: TOOLS }],
-  })
-
-  // Load conversation history
+  // Load conversation history (shared across key attempts)
   const history = await db.select().from(agentConversations)
     .where(eq(agentConversations.sessionId, sessionId))
     .orderBy(agentConversations.createdAt)
@@ -356,39 +370,61 @@ export async function runAgent(sessionId: string, userMessage: string): Promise<
     parts: [{ text: h.content }],
   }))
 
-  const chat = model.startChat({ history: chatHistory })
-  const toolCalls: Array<{ tool: string; input: any; result: any }> = []
-
-  let result = await chat.sendMessage(userMessage)
-  let response = result.response
-
-  // Agentic loop — keep executing tools until model stops calling them
-  while (response.functionCalls()?.length) {
-    const calls = response.functionCalls()!
-    const toolResults = []
-
-    for (const call of calls) {
-      log.info({ tool: call.name, sessionId }, 'Gemini tool call')
-      const toolResult = await executeTool(call.name, call.args)
-      toolCalls.push({ tool: call.name, input: call.args, result: toolResult })
-      toolResults.push({
-        functionResponse: {
-          name: call.name,
-          response: { content: JSON.stringify(toolResult) },
-        },
+  // Try each Gemini key in order, fall back on rate limit
+  for (let keyIdx = 0; keyIdx < geminiClients.length; keyIdx++) {
+    try {
+      const model = geminiClients[keyIdx]!.getGenerativeModel({
+        model: 'gemini-flash-latest',
+        systemInstruction: SYSTEM_PROMPT,
+        tools: [{ functionDeclarations: TOOLS }],
       })
-    }
 
-    result = await chat.sendMessage(toolResults)
-    response = result.response
+      const chat = model.startChat({ history: chatHistory })
+      const toolCalls: Array<{ tool: string; input: any; result: any }> = []
+
+      let result = await chat.sendMessage(userMessage)
+      let response = result.response
+
+      // Agentic loop — keep executing tools until model stops calling them
+      while (response.functionCalls()?.length) {
+        const calls = response.functionCalls()!
+        const toolResults = []
+
+        for (const call of calls) {
+          log.info({ tool: call.name, sessionId }, 'Gemini tool call')
+          const toolResult = await executeTool(call.name, call.args)
+          toolCalls.push({ tool: call.name, input: call.args, result: toolResult })
+          toolResults.push({
+            functionResponse: {
+              name: call.name,
+              response: { content: JSON.stringify(toolResult) },
+            },
+          })
+        }
+
+        result = await chat.sendMessage(toolResults)
+        response = result.response
+      }
+
+      const finalText = response.text()
+
+      await db.insert(agentConversations).values([
+        { sessionId, role: 'user', content: userMessage },
+        { sessionId, role: 'assistant', content: finalText, metadata: { toolCalls: toolCalls.length, model: 'gemini-flash-latest', keyIndex: keyIdx } },
+      ])
+
+      return { response: finalText, toolCalls }
+
+    } catch (err) {
+      if (isRateLimit(err) && keyIdx < geminiClients.length - 1) {
+        log.warn({ keyIndex: keyIdx, sessionId }, 'Gemini rate limit hit, switching to fallback key')
+        continue
+      }
+      throw err
+    }
   }
 
-  const finalText = response.text()
-
-  await db.insert(agentConversations).values([
-    { sessionId, role: 'user', content: userMessage },
-    { sessionId, role: 'assistant', content: finalText, metadata: { toolCalls: toolCalls.length, model: 'gemini-flash-latest' } },
-  ])
-
-  return { response: finalText, toolCalls }
+  // All keys exhausted — fall back to demo mode
+  log.error({ sessionId }, 'All Gemini keys rate-limited, falling back to demo mode')
+  return runDemoAgent(userMessage)
 }
