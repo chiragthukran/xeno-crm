@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "paths": {
+      "@xeno/db": ["../../packages/db/src/index.ts"],
+      "@xeno/types": ["../../packages/types/src/index.ts"],
+      "@xeno/logger": ["../../packages/logger/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "xeno-crm",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "db:push": "pnpm --filter @xeno/db db:push",
+    "db:seed": "pnpm --filter @xeno/db db:seed",
+    "db:migrate": "pnpm --filter @xeno/db db:migrate"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.4",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}
