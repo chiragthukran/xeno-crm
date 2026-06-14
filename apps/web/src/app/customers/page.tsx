@@ -74,8 +74,9 @@ export default function CustomersPage() {
             ) : customers.map((row: any) => {
               const c = row.customer ?? row
               const insight = row.insight
-              const risk = churnLabel(Number(insight?.churn_risk ?? 0))
-              const lastPurchase = c.last_purchase_at ? new Date(c.last_purchase_at) : null
+              const risk = churnLabel(Number(insight?.churnRisk ?? insight?.churn_risk ?? 0))
+              const lastPurchase = c.lastPurchaseAt ?? c.last_purchase_at
+                ? new Date(c.lastPurchaseAt ?? c.last_purchase_at) : null
               const daysAgo = lastPurchase ? Math.floor((Date.now() - lastPurchase.getTime()) / 86400000) : null
               return (
                 <tr key={c.id} className="border-b border-outline/20 hover:bg-surface-low">
@@ -84,7 +85,7 @@ export default function CustomersPage() {
                     <div className="text-xs text-on-surface-muted">{c.email}</div>
                   </td>
                   <td className="px-5 py-3 text-on-surface-muted">{c.city ?? '—'}</td>
-                  <td className="px-5 py-3 text-right font-bold">₹{Number(c.lifetime_value).toLocaleString()}</td>
+                  <td className="px-5 py-3 text-right font-bold">₹{Number(c.lifetimeValue ?? c.lifetime_value ?? 0).toLocaleString()}</td>
                   <td className="px-5 py-3 text-center">
                     <span className={`border px-2 py-0.5 text-xs font-bold ${risk.color}`}>{risk.label}</span>
                   </td>
