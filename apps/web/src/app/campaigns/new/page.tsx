@@ -56,7 +56,7 @@ export default function NewCampaignPage() {
           >
             <option value="">Select a segment...</option>
             {segments.map((s: any) => (
-              <option key={s.id} value={s.id}>{s.name} ({s.estimated_size?.toLocaleString() ?? '?'} customers)</option>
+              <option key={s.id} value={s.id}>{s.name} ({s.estimatedSize?.toLocaleString() ?? '?'} customers)</option>
             ))}
           </select>
         </div>

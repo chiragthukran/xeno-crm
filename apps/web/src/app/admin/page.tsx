@@ -42,7 +42,7 @@ export default function AdminPage() {
   const updateCap = async (channel: string, field: string, value: number) => {
     const cap = freqCaps.find(c => c.channel === channel)
     if (!cap) return
-    await api.updateFreqCap({ channel, maxMessagesPerCustomer: field === 'max' ? value : cap.max_messages_per_customer, windowDays: field === 'days' ? value : cap.window_days })
+    await api.updateFreqCap({ channel, maxMessagesPerCustomer: field === 'max' ? value : cap.maxMessagesPerCustomer, windowDays: field === 'days' ? value : cap.windowDays })
     api.frequencyCaps().then(setFreqCaps)
   }
 
@@ -99,12 +99,12 @@ export default function AdminPage() {
                 <tr key={job.id} className="border-b border-outline/20">
                   <td className="px-4 py-2.5 font-mono text-xs">#EVT-{job.id.slice(0,4).toUpperCase()}</td>
                   <td className="px-4 py-2.5">
-                    <span className={`border px-1.5 py-0.5 text-xs font-bold ${JOB_TYPE_COLORS[job.queue_name] ?? 'bg-surface-low border-black'}`}>
-                      {job.queue_name?.toUpperCase() ?? 'UNKNOWN'}
+                    <span className={`border px-1.5 py-0.5 text-xs font-bold ${JOB_TYPE_COLORS[job.queueName] ?? 'bg-surface-low border-black'}`}>
+                      {job.queueName?.toUpperCase() ?? 'UNKNOWN'}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-red-700 font-medium text-xs">{job.error_message}</td>
-                  <td className="px-4 py-2.5 text-center">{job.retry_count} / 3</td>
+                  <td className="px-4 py-2.5 text-red-700 font-medium text-xs">{job.errorMessage}</td>
+                  <td className="px-4 py-2.5 text-center">{job.retryCount} / 3</td>
                   <td className="px-4 py-2.5 text-center">
                     <button onClick={() => retryJob(job.id)} className="bg-lime border-2 border-black px-2 py-0.5 text-xs font-headline font-bold btn-press">
                       Retry
@@ -130,14 +130,14 @@ export default function AdminPage() {
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    defaultValue={cap.max_messages_per_customer}
+                    defaultValue={cap.maxMessagesPerCustomer}
                     min={1} max={10}
                     onBlur={e => updateCap(cap.channel, 'max', Number(e.target.value))}
                     className="w-16 border-2 border-white bg-black text-white text-center font-headline font-black py-1 outline-none"
                   />
                   <span className="text-sm">per</span>
                   <select
-                    defaultValue={cap.window_days === 7 ? 'Week' : 'Day'}
+                    defaultValue={cap.windowDays === 7 ? 'Week' : 'Day'}
                     onChange={e => updateCap(cap.channel, 'days', e.target.value === 'Week' ? 7 : 1)}
                     className="border-2 border-white bg-black text-white px-2 py-1 text-sm font-body outline-none"
                   >

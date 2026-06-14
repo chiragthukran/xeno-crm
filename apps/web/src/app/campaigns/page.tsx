@@ -109,11 +109,11 @@ export default function CampaignsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="font-headline font-bold">{c.name}</span>
-                    {c.created_by === 'ai_agent' && (
+                    {c.createdBy === 'ai_agent' && (
                       <span className="bg-black text-white text-xs px-1.5 py-0.5 font-bold">AI</span>
                     )}
                   </div>
-                  <div className="text-xs font-body text-on-surface-muted">ID: {c.id.slice(0, 8)} · Created {new Date(c.created_at).toLocaleDateString()}</div>
+                  <div className="text-xs font-body text-on-surface-muted">ID: {c.id.slice(0, 8)} · Created {new Date(c.createdAt).toLocaleDateString()}</div>
                 </div>
                 <span className={`border-2 text-xs font-headline font-bold px-2 py-0.5 ${STATUS_COLORS[c.status] ?? 'border-black'}`}>
                   {c.status === 'RUNNING' ? '● ' : c.status === 'PAUSED' ? '❚❚ ' : ''}{c.status}

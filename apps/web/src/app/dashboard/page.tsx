@@ -132,7 +132,7 @@ export default function Dashboard() {
                       <Link href={`/campaigns/${camp.id}`} className="font-medium hover:underline">
                         {camp.name}
                       </Link>
-                      {camp.created_by === 'ai_agent' && (
+                      {camp.createdBy === 'ai_agent' && (
                         <span className="ml-1.5 bg-black text-white text-xs px-1 py-0.5 font-bold">AI</span>
                       )}
                     </td>
