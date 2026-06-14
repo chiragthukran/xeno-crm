@@ -13,8 +13,8 @@ const connectionString = process.env.DATABASE_URL!
 // Transaction pooler (Supabase/pgbouncer) requires prepare:false and explicit search_path
 const isPooler = connectionString.includes('.pooler.supabase.com')
 const client = postgres(connectionString, {
-  max: 5,         // keep headroom: worker(concurrency 10) + API share this pool via PgBouncer
-  idle_timeout: 20,
+  max: 10,
+  idle_timeout: 30,
   connect_timeout: 10,
   prepare: !isPooler,
   ...(isPooler ? { connection: { search_path: 'public' } } : {}),

@@ -75,7 +75,7 @@ export const campaignWorker = new Worker(
   },
   {
     connection: workerRedis,
-    concurrency: 10, // backpressure gate for delivery
+    concurrency: 5, // reduced from 10 to leave DB pool headroom for API requests
   }
 )
 

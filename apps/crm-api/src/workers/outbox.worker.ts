@@ -10,28 +10,35 @@ import { randomUUID } from 'node:crypto'
 const log = createLogger('outbox-worker')
 
 async function processOutbox() {
-  // FOR UPDATE SKIP LOCKED prevents race condition with multiple workers
-  const pending = await db.execute(sql`
-    SELECT * FROM outbox_events
-    WHERE published_at IS NULL
-    ORDER BY created_at
-    LIMIT 10
-    FOR UPDATE SKIP LOCKED
-  `)
+  // Atomically claim events: lock + mark published in ONE transaction.
+  // Without this, the lock releases before handleCampaignLaunch finishes,
+  // and the next poll cycle (3s later) re-picks the same row → duplicate launches.
+  const claimed = await db.transaction(async (tx) => {
+    const pending = await tx.execute(sql`
+      SELECT * FROM outbox_events
+      WHERE published_at IS NULL
+      ORDER BY created_at
+      LIMIT 10
+      FOR UPDATE SKIP LOCKED
+    `)
+    if ((pending as any[]).length === 0) return []
 
-  for (const row of pending as any[]) {
+    for (const row of pending as any[]) {
+      await tx.update(outboxEvents)
+        .set({ publishedAt: new Date() })
+        .where(eq(outboxEvents.id, row.id))
+    }
+    return pending as any[]
+  })
+
+  // Process outside the transaction — row is already claimed, no re-processing possible
+  for (const row of claimed) {
     try {
       if (row.event_type === 'campaign.launch') {
         await handleCampaignLaunch(row.payload as { campaignId: string; triggeredBy: string })
       }
-
-      await db.update(outboxEvents)
-        .set({ publishedAt: new Date() })
-        .where(eq(outboxEvents.id, row.id))
-
     } catch (err) {
-      // Leave as PENDING — next poll cycle will retry automatically
-      log.error({ err, outboxId: row.id, eventType: row.event_type }, 'outbox publish failed, leaving as PENDING')
+      log.error({ err, outboxId: row.id, eventType: row.event_type }, 'outbox processing failed (event already marked published)')
     }
   }
 }
