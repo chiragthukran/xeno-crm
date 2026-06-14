@@ -107,6 +107,115 @@ The marketer approves. The AI never launches without human sign-off.
 
 ---
 
+## What Makes This Scalable
+
+Most take-home CRMs are basic CRUD apps. This one is built for production problems that show up when you send millions of messages.
+
+### Redis + BullMQ — Async job queue
+
+Campaign delivery is never synchronous. When a marketer hits Launch, the API writes jobs to a **BullMQ queue backed by Upstash Redis**. Workers pick them up with concurrency 10 — meaning 10 messages send in parallel per worker instance. Add more workers to scale horizontally.
+
+```
+Launch button → outbox_events table → BullMQ (Redis) → 10 workers → Channel Stub
+```
+
+Each job has **3 automatic retries** with exponential backoff (2s → 4s → 8s). After all retries fail, the job moves to a **Dead Letter Queue** table — visible in the Admin panel for manual inspection and re-queue.
+
+---
+
+### Outbox Pattern — zero message loss
+
+The biggest failure risk in async systems: you write to Redis, Redis crashes, the job is gone forever. The **Transactional Outbox** fixes this.
+
+On launch, we write to `outbox_events` (PostgreSQL) **not** directly to BullMQ. A poller runs every second, reads unpublished rows, and flushes them to the queue:
+
+```sql
+SELECT * FROM outbox_events
+WHERE published_at IS NULL
+ORDER BY created_at
+LIMIT 10
+FOR UPDATE SKIP LOCKED  -- safe for multiple worker instances
+```
+
+`FOR UPDATE SKIP LOCKED` means two worker instances can run simultaneously without picking up the same row. If Redis goes down after the row is written but before it's published, the next poll cycle retries it. **No message is ever lost.**
+
+---
+
+### Idempotency — no double sends
+
+BullMQ retries create a new risk: the job succeeds but the network drops before Redis gets the acknowledgement. BullMQ retries it — the customer gets the message twice.
+
+Every send job gets a SHA256 key: `hash(campaign_id + customer_id)`. Before sending, we check:
+
+```typescript
+await db.insert(processedEvents)
+  .values({ idempotencyKey: key })
+  .onConflictDoNothing()  // UNIQUE constraint on key
+  .returning()
+// empty result = already processed = skip
+```
+
+A retry that reaches an already-processed key exits immediately. **Customers can never receive the same campaign message twice.**
+
+---
+
+### Bulkhead Pattern — queues don't interfere
+
+Two completely separate BullMQ queues, each with their own Redis connection and concurrency limit:
+
+| Queue | Concurrency | Purpose |
+|---|---|---|
+| `campaign-delivery` | 10 | Sending messages to customers |
+| `ai-insights` | 2 | Background AI enrichment jobs |
+
+Why separate connections? BullMQ uses blocking Redis commands internally. Sharing one connection between two workers causes them to block each other. Separate connections = separate throughput.
+
+If 50,000 delivery jobs are queued during a big campaign, the AI insight queue still runs at full speed. One cannot starve the other. This is the **Bulkhead pattern** from resilience engineering.
+
+---
+
+### Pre-aggregated Stats — no slow COUNT(*) queries
+
+Every delivery receipt (delivered, opened, clicked) increments a counter in `campaign_stats` atomically:
+
+```sql
+UPDATE campaign_stats
+SET delivered_count = delivered_count + 1
+WHERE campaign_id = $1
+```
+
+The dashboard and campaign detail page read directly from this table — no `COUNT(*)`, no `GROUP BY`, no joins. The read query is always `O(1)` regardless of how many events have fired.
+
+---
+
+### Supabase Connection Pooler — handles traffic spikes
+
+PostgreSQL has a hard limit on concurrent connections (~100 by default). Without pooling, a traffic spike from concurrent campaign workers exhausts connections and crashes the DB.
+
+We connect through Supabase's **PgBouncer transaction pooler** (port 6543). Hundreds of worker requests share a small pool of real DB connections. The DB never sees more connections than it can handle.
+
+---
+
+### HMAC Webhook Verification — secure receipts
+
+The channel stub calls back to `/communications/receipt` with delivery events. Anyone who knows the URL could fake events and inflate stats.
+
+The channel stub signs every callback body with HMAC-SHA256 using a shared secret. The receipt endpoint verifies it using `timingSafeEqual` — not `===`. Regular string comparison exits early on the first mismatched byte, leaking timing information that attackers can use to forge signatures. `timingSafeEqual` always takes the same time regardless of where strings differ.
+
+---
+
+### Correlation IDs — trace any message end-to-end
+
+Every HTTP request into the system gets a `x-correlation-id` header. This ID travels through:
+
+```
+HTTP request → BullMQ job payload → Channel Stub → /receipt callback → event log
+```
+
+Every log line from every service includes it. To trace what happened to one specific message, `grep correlationId=abc123` across all three service logs reconstructs the complete journey.
+
+---
+
 ## System Architecture
 
 ```
