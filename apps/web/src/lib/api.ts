@@ -15,9 +15,11 @@ export const api = {
   customerStats:    ()                => req<any>('/customers/stats/summary'),
 
   // Segments
-  segments:         ()                => req<any[]>('/segments'),
-  createSegment:    (body: any)       => req<any>('/segments', { method: 'POST', body: JSON.stringify(body) }),
-  previewSegment:   (id: string)      => req<any>(`/segments/${id}/preview`),
+  segments:          ()                => req<any[]>('/segments'),
+  segment:           (id: string)     => req<any>(`/segments/${id}`),
+  segmentCustomers:  (id: string)     => req<any[]>(`/segments/${id}/customers`),
+  createSegment:     (body: any)      => req<any>('/segments', { method: 'POST', body: JSON.stringify(body) }),
+  previewSegment:    (id: string)     => req<any>(`/segments/${id}/preview`),
 
   // Campaigns
   campaigns:        ()                => req<any[]>('/campaigns'),

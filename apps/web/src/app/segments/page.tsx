@@ -52,9 +52,9 @@ export default function SegmentsPage() {
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0 ml-4">
-                  <div className="font-headline font-black text-xl">{seg.estimated_size?.toLocaleString() ?? '—'}</div>
+                  <div className="font-headline font-black text-xl">{seg.estimatedSize?.toLocaleString() ?? '—'}</div>
                   <div className="text-xs font-body text-on-surface-muted">
-                    {seg.estimated_revenue ? `Exp. ₹${(Number(seg.estimated_revenue)/1000).toFixed(0)}K` : '—'}
+                    {seg.estimatedRevenue ? `Exp. ₹${(Number(seg.estimatedRevenue)/1000).toFixed(0)}K` : '—'}
                   </div>
                 </div>
               </div>

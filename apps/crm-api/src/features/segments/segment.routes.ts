@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
-import { db, segments } from '@xeno/db'
+import { db, segments, customers } from '@xeno/db'
 import { eq, desc } from 'drizzle-orm'
+import { resolveSegmentCustomers } from './segment.service.js'
 import { z } from 'zod'
 import { previewSegment } from './segment.service.js'
 
@@ -59,6 +60,17 @@ export async function segmentRoutes(app: FastifyInstance) {
     if (!seg) return reply.status(404).send({ error: 'Segment not found' })
     const preview = await previewSegment(seg.filterRules as any)
     return reply.send(preview)
+  })
+
+  app.get('/segments/:id/customers', async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const [seg] = await db.select().from(segments).where(eq(segments.id, id))
+    if (!seg) return reply.status(404).send({ error: 'Segment not found' })
+    const ids = await resolveSegmentCustomers(seg.filterRules as any)
+    if (!ids.length) return reply.send([])
+    const { inArray } = await import('drizzle-orm')
+    const rows = await db.select().from(customers).where(inArray(customers.id, ids.slice(0, 50)))
+    return reply.send(rows)
   })
 
   app.delete('/segments/:id', async (request, reply) => {
