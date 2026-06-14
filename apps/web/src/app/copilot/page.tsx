@@ -157,7 +157,7 @@ function CopilotInner() {
   const allToolCalls = messages.flatMap(m => m.toolCalls ?? [])
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Chat panel */}
       <div className="flex-1 flex flex-col">
         <div className="border-b-3 border-black px-6 py-4 bg-white flex items-center gap-3">
@@ -243,7 +243,7 @@ function CopilotInner() {
 
 export default function CopilotPage() {
   return (
-    <Suspense fallback={<div className="flex h-screen items-center justify-center font-body">Loading...</div>}>
+    <Suspense fallback={<div className="flex h-full items-center justify-center font-body">Loading...</div>}>
       <CopilotInner />
     </Suspense>
   )
