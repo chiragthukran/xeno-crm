@@ -16,7 +16,7 @@ export const deliveryQueue = new Queue('campaign-delivery', {
   },
 })
 
-// ── AI queue — low concurrency, Claude API rate limits apply ──────────────────
+// ── AI queue — low concurrency, Gemini API rate limits apply ──────────────────
 export const aiQueue = new Queue('ai-insights', {
   connection: redis,
   defaultJobOptions: {

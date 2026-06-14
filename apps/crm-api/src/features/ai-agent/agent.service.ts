@@ -1,26 +1,43 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenerativeAI, type FunctionDeclaration, SchemaType } from '@google/generative-ai'
 import { db, segments, campaigns, campaignStats, customerInsights, agentConversations } from '@xeno/db'
-import { eq, desc, lt, gt, sql } from 'drizzle-orm'
+import { eq, desc, sql } from 'drizzle-orm'
 import { previewSegment } from '../segments/segment.service.js'
-import { validatePreLaunch } from '../campaigns/campaign.service.js'
 import { createLogger } from '@xeno/logger'
-import type { AgentMessage, CampaignSimulation, NextBestAction } from '@xeno/types'
+import type { CampaignSimulation, NextBestAction } from '@xeno/types'
 
 const log = createLogger('ai-agent')
 const DEMO_MODE = process.env.DEMO_MODE === 'true'
-const anthropic = DEMO_MODE ? null : new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const gemini = DEMO_MODE ? null : new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
-// ── Tool definitions ──────────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are the Campaign Copilot for Luxe Fashion — an AI marketing agent.
 
-const TOOLS: Anthropic.Tool[] = [
+Your job is to help the marketing team reach their shoppers intelligently. You can:
+- Build precise customer segments from natural language
+- Simulate campaign performance before launch
+- Create campaigns (always in DRAFT, user must approve before launch)
+- Analyse customer behaviour and surface insights
+- Recommend next best actions
+
+Brand context: Luxe Fashion is a premium D2C fashion brand in India. Main channels: WhatsApp (best engagement), SMS, Email. Customers range from VIP high-spenders to at-risk churners.
+
+Always:
+1. Check existing segments before creating new ones
+2. Run simulation before suggesting a campaign
+3. Show guardrail results (suppression, frequency cap) transparently
+4. Present campaigns as proposals — never launch without explicit user approval
+5. Be concise and actionable. Use numbers and ₹ amounts to make the impact real.`
+
+// ── Tool definitions (Gemini FunctionDeclaration format) ─────────────────────
+
+const TOOLS: FunctionDeclaration[] = [
   {
     name: 'build_segment',
     description: 'Build a customer segment from a natural language description. Returns filter rules, estimated size, and AI rationale.',
-    input_schema: {
-      type: 'object' as const,
+    parameters: {
+      type: SchemaType.OBJECT,
       properties: {
-        nl_query: { type: 'string', description: 'Natural language description of the target audience' },
-        segment_name: { type: 'string', description: 'Human-readable name for the segment' },
+        nl_query:     { type: SchemaType.STRING, description: 'Natural language description of the target audience' },
+        segment_name: { type: SchemaType.STRING, description: 'Human-readable name for the segment' },
       },
       required: ['nl_query', 'segment_name'],
     },
@@ -28,10 +45,10 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_customer_insights',
     description: 'Get AI-powered customer insights including churn risks, dormant high-value customers, and engagement scores.',
-    input_schema: {
-      type: 'object' as const,
+    parameters: {
+      type: SchemaType.OBJECT,
       properties: {
-        insight_type: { type: 'string', enum: ['churn_risk', 'dormant_vip', 'high_engagers', 'all'] },
+        insight_type: { type: SchemaType.STRING, description: 'One of: churn_risk, dormant_vip, high_engagers, all' },
       },
       required: ['insight_type'],
     },
@@ -39,55 +56,55 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'simulate_campaign',
     description: 'Predict campaign performance before launch based on segment and channel.',
-    input_schema: {
-      type: 'object' as const,
+    parameters: {
+      type: SchemaType.OBJECT,
       properties: {
-        segment_id:       { type: 'string', description: 'UUID of the segment' },
-        channel:          { type: 'string', enum: ['whatsapp', 'sms', 'email', 'rcs'] },
-        message_preview:  { type: 'string', description: 'Draft message to evaluate' },
+        segment_id:      { type: SchemaType.STRING, description: 'UUID of the segment' },
+        channel:         { type: SchemaType.STRING, description: 'One of: whatsapp, sms, email, rcs' },
+        message_preview: { type: SchemaType.STRING, description: 'Draft message to evaluate' },
       },
       required: ['segment_id', 'channel'],
     },
   },
   {
     name: 'create_campaign',
-    description: 'Create a new campaign (in DRAFT status, pending approval). Returns the campaign ID.',
-    input_schema: {
-      type: 'object' as const,
+    description: 'Create a new campaign in DRAFT status, pending marketer approval before launch.',
+    parameters: {
+      type: SchemaType.OBJECT,
       properties: {
-        name:             { type: 'string' },
-        segment_id:       { type: 'string' },
-        message_template: { type: 'string' },
-        channel:          { type: 'string', enum: ['whatsapp', 'sms', 'email', 'rcs'] },
-        send_rate:        { type: 'number', description: 'Messages per minute (default 100)' },
+        name:             { type: SchemaType.STRING },
+        segment_id:       { type: SchemaType.STRING },
+        message_template: { type: SchemaType.STRING },
+        channel:          { type: SchemaType.STRING, description: 'One of: whatsapp, sms, email, rcs' },
+        send_rate:        { type: SchemaType.NUMBER, description: 'Messages per minute (default 100)' },
       },
       required: ['name', 'segment_id', 'message_template', 'channel'],
     },
   },
   {
     name: 'get_campaign_stats',
-    description: 'Get real-time stats for a specific campaign.',
-    input_schema: {
-      type: 'object' as const,
+    description: 'Get real-time delivery stats for a specific campaign.',
+    parameters: {
+      type: SchemaType.OBJECT,
       properties: {
-        campaign_id: { type: 'string' },
+        campaign_id: { type: SchemaType.STRING },
       },
       required: ['campaign_id'],
     },
   },
   {
     name: 'list_segments',
-    description: 'List all existing customer segments.',
-    input_schema: {
-      type: 'object' as const,
+    description: 'List all existing customer segments to avoid creating duplicates.',
+    parameters: {
+      type: SchemaType.OBJECT,
       properties: {},
     },
   },
   {
     name: 'recommend_next_action',
     description: 'Get AI-powered next best actions based on current customer and campaign data.',
-    input_schema: {
-      type: 'object' as const,
+    parameters: {
+      type: SchemaType.OBJECT,
       properties: {},
     },
   },
@@ -98,8 +115,7 @@ const TOOLS: Anthropic.Tool[] = [
 async function buildSegment(nlQuery: string, segmentName: string) {
   let filterRules: any
 
-  if (DEMO_MODE || !anthropic) {
-    // Demo mode: derive filter rules from keywords without API call
+  if (DEMO_MODE || !gemini) {
     const q = nlQuery.toLowerCase()
     if (q.includes('dormant') || q.includes('inactive') || q.includes('haven') || q.includes('win')) {
       filterRules = { operator: 'AND', conditions: [{ field: 'lifetime_value', op: 'gt', value: 3000 }, { field: 'last_purchase_at', op: 'days_ago_gt', value: 45 }] }
@@ -111,6 +127,7 @@ async function buildSegment(nlQuery: string, segmentName: string) {
       filterRules = { operator: 'AND', conditions: [{ field: 'lifetime_value', op: 'gt', value: 1000 }] }
     }
   } else {
+    const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash' })
     const prompt = `You are a CRM expert. Convert this natural language segment query into structured filter rules.
 
 Query: "${nlQuery}"
@@ -123,7 +140,7 @@ Available fields:
 - city (text)
 - tags (array, use 'contains' op with values: 'vip', 'regular', 'at-risk')
 
-Respond ONLY with a JSON object in this exact format:
+Respond ONLY with a JSON object:
 {
   "operator": "AND",
   "conditions": [
@@ -132,20 +149,10 @@ Respond ONLY with a JSON object in this exact format:
   ]
 }
 
-Common patterns:
-- "high value" = lifetime_value > 5000
-- "dormant/inactive" = last_purchase_at days_ago_gt 30-90
-- "loyal/frequent" = total_orders >= 3
-- "VIP" = tags contains 'vip'
-- "at-risk" = tags contains 'at-risk'`
+Patterns: "high value"=lifetime_value>5000, "dormant"=days_ago_gt 30-90, "loyal"=total_orders>=3, "VIP"=tags contains vip`
 
-    const resp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 500,
-      messages: [{ role: 'user', content: prompt }],
-    })
-
-    const text = resp.content[0]?.type === 'text' ? resp.content[0].text : '{}'
+    const result = await model.generateContent(prompt)
+    const text = result.response.text()
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     filterRules = jsonMatch ? JSON.parse(jsonMatch[0]) : { operator: 'AND', conditions: [] }
   }
@@ -166,46 +173,37 @@ Common patterns:
 
 async function getCustomerInsights(insightType: string) {
   const rows = await db.select().from(customerInsights).orderBy(desc(customerInsights.churnRisk)).limit(20)
-
-  const dormantVip    = rows.filter(r => Number(r.churnRisk) > 0.5 && Number(r.lifetimeValue) > 3000)
-  const highEngagers  = rows.filter(r => Number(r.engagementScore) > 80)
-  const churnRisks    = rows.filter(r => Number(r.churnRisk) > 0.7)
-
+  const dormantVip   = rows.filter(r => Number(r.churnRisk) > 0.5 && Number(r.lifetimeValue) > 3000)
+  const highEngagers = rows.filter(r => Number(r.engagementScore) > 80)
+  const churnRisks   = rows.filter(r => Number(r.churnRisk) > 0.7)
   return { dormantVip: dormantVip.slice(0, 5), highEngagers: highEngagers.slice(0, 5), churnRisks: churnRisks.slice(0, 5), totalAnalyzed: rows.length }
 }
 
 async function simulateCampaign(segmentId: string, channel: string, messagePreview?: string): Promise<CampaignSimulation> {
   const [seg] = await db.select().from(segments).where(eq(segments.id, segmentId))
-
-  // Channel-based baseline rates (from channel_performance data)
   const baselines: Record<string, { open: number; click: number; conv: number }> = {
     whatsapp: { open: 0.92, click: 0.18, conv: 0.08 },
     sms:      { open: 0.88, click: 0.12, conv: 0.05 },
     email:    { open: 0.45, click: 0.08, conv: 0.03 },
     rcs:      { open: 0.70, click: 0.14, conv: 0.06 },
   }
-
   const base = baselines[channel] ?? baselines.email!
   const size = seg?.estimatedSize ?? 100
   const avgLtv = Number(seg?.estimatedRevenue ?? 0) / Math.max(size, 1)
-
   return {
     predictedOpenRate:       Math.round(base.open * 100 * 10) / 10,
     predictedClickRate:      Math.round(base.click * 100 * 10) / 10,
     predictedConversionRate: Math.round(base.conv * 100 * 10) / 10,
     confidenceScore:         0.78,
     estimatedRevenue:        Math.round(size * base.conv * avgLtv),
-    sendTime:                '14:00 EST',
+    sendTime:                '14:00 IST',
     costEstimate:            Math.round(size * 0.02 * 100) / 100,
   }
 }
 
 async function createCampaign(name: string, segmentId: string, messageTemplate: string, channel: string, sendRate?: number) {
   const [campaign] = await db.insert(campaigns).values({
-    name,
-    segmentId,
-    messageTemplate,
-    channel,
+    name, segmentId, messageTemplate, channel,
     sendRatePerMinute: sendRate ?? 100,
     status: 'DRAFT',
     createdBy: 'ai_agent',
@@ -226,8 +224,7 @@ async function recommendNextAction(): Promise<NextBestAction[]> {
   const insights = await db.select().from(customerInsights)
     .where(sql`churn_risk > 0.6 AND lifetime_value > 3000`)
     .limit(1)
-
-  const actions: NextBestAction[] = [
+  return [
     {
       type: 'campaign',
       title: 'Re-engage high-value dormant customers',
@@ -238,7 +235,7 @@ async function recommendNextAction(): Promise<NextBestAction[]> {
     {
       type: 'segment',
       title: 'Identify cart abandoners',
-      description: 'Customers who clicked your last campaign but didn\'t purchase. High purchase intent — time-limited offer converts 15-20%.',
+      description: "Customers who clicked your last campaign but didn't purchase. High purchase intent — time-limited offer converts 15-20%.",
       priority: 'HIGH',
       estimatedRevenue: 42000,
     },
@@ -249,20 +246,18 @@ async function recommendNextAction(): Promise<NextBestAction[]> {
       priority: 'MEDIUM',
     },
   ]
-
-  return actions
 }
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
 async function executeTool(toolName: string, toolInput: any): Promise<any> {
   switch (toolName) {
-    case 'build_segment':        return buildSegment(toolInput.nl_query, toolInput.segment_name)
+    case 'build_segment':         return buildSegment(toolInput.nl_query, toolInput.segment_name)
     case 'get_customer_insights': return getCustomerInsights(toolInput.insight_type)
-    case 'simulate_campaign':    return simulateCampaign(toolInput.segment_id, toolInput.channel, toolInput.message_preview)
-    case 'create_campaign':      return createCampaign(toolInput.name, toolInput.segment_id, toolInput.message_template, toolInput.channel, toolInput.send_rate)
-    case 'get_campaign_stats':   return getCampaignStats(toolInput.campaign_id)
-    case 'list_segments':        return listSegments()
+    case 'simulate_campaign':     return simulateCampaign(toolInput.segment_id, toolInput.channel, toolInput.message_preview)
+    case 'create_campaign':       return createCampaign(toolInput.name, toolInput.segment_id, toolInput.message_template, toolInput.channel, toolInput.send_rate)
+    case 'get_campaign_stats':    return getCampaignStats(toolInput.campaign_id)
+    case 'list_segments':         return listSegments()
     case 'recommend_next_action': return recommendNextAction()
     default: return { error: `Unknown tool: ${toolName}` }
   }
@@ -270,10 +265,7 @@ async function executeTool(toolName: string, toolInput: any): Promise<any> {
 
 // ── Demo mode scripted responses (no API key needed) ─────────────────────────
 
-async function runDemoAgent(userMessage: string): Promise<{
-  response: string
-  toolCalls: Array<{ tool: string; input: any; result: any }>
-}> {
+async function runDemoAgent(userMessage: string) {
   const msg = userMessage.toLowerCase()
   const segs = await listSegments()
   const dormantSeg = segs.find(s => s.name.toLowerCase().includes('dormant')) ?? segs[0]
@@ -287,16 +279,14 @@ async function runDemoAgent(userMessage: string): Promise<{
   }
 
   if (msg.includes('dormant') || msg.includes('inactive') || msg.includes('haven') || msg.includes('re-engage') || msg.includes('win') || msg.includes('high-value')) {
-    const segResult = await buildSegment('High value customers who haven\'t purchased in 45 days', 'Dormant High-Value — Win-back')
+    const segResult = await buildSegment("High value customers who haven't purchased in 45 days", 'Dormant High-Value — Win-back')
     const sim = dormantSeg ? await simulateCampaign(dormantSeg.id ?? segResult.segment!.id, 'whatsapp') : null
     const newCampaign = await createCampaign(
       'Win-back: Dormant High-Value',
       segResult.segment!.id,
       'Hi {{name}}, we miss you at Luxe Fashion 💙 Here\'s an exclusive 15% off just for you — valid for 48 hours. Shop your favourites: luxefashion.in/vip',
-      'whatsapp',
-      100,
+      'whatsapp', 100,
     )
-
     return {
       response: `I've analysed your customer data and built a win-back campaign proposal.\n\n**Segment:** ${segResult.preview.count} high-value dormant customers (avg LTV ₹${segResult.preview.avgLifetimeValue.toLocaleString()})\n**Channel:** WhatsApp (92% open rate — best performing channel)\n**Guardrails passed:** 45 suppressed profiles removed, 12 frequency-capped profiles removed\n**Audience overlap:** 14% with last campaign (within acceptable range)\n\n**Predicted performance:**\n- Open rate: ${sim?.predictedOpenRate ?? 92}%\n- Click rate: ${sim?.predictedClickRate ?? 18}%\n- Estimated revenue: ₹${sim?.estimatedRevenue?.toLocaleString() ?? '85,000'}\n\nThe campaign draft is ready. Hit **APPROVE & LAUNCH** to send it, or ask me to adjust the message.`,
       toolCalls: [
@@ -319,7 +309,7 @@ async function runDemoAgent(userMessage: string): Promise<{
     }
   }
 
-  if (msg.includes('stat') || msg.includes('performance') || msg.includes('how') && msg.includes('campaign')) {
+  if (msg.includes('stat') || msg.includes('performance') || (msg.includes('how') && msg.includes('campaign'))) {
     const allSegs = await listSegments()
     return {
       response: `Here's your current performance snapshot:\n\n**Active Segments:** ${allSegs.length}\n- VIP Shoppers: 12,450 customers | ₹4.2M potential\n- Dormant High-Value: 8,102 customers | ₹850K potential\n- Recent Abandoners: 3,491 customers | ₹620K potential\n\n**Channel Performance (last 30 days):**\n- WhatsApp: 92% open, 18% click\n- SMS: 88% open, 12% click\n- Email: 45% open, 8% click\n\nWhatsApp is your strongest channel. Your last campaign (Summer '24 Clearance) generated ₹1.42M revenue at 99% delivery rate.`,
@@ -327,22 +317,20 @@ async function runDemoAgent(userMessage: string): Promise<{
     }
   }
 
-  // Default helpful response
   return {
     response: `I'm your Campaign Copilot for Luxe Fashion. Here's what I can help you with:\n\n**Try asking me:**\n- "Re-engage our high-value customers who haven't bought in 45 days"\n- "What should I do next?" — I'll surface your best opportunities\n- "Show me campaign performance" — analytics overview\n- "Create a VIP early access campaign"\n\nI'll build the segment, simulate performance, check guardrails (suppression + frequency caps), and propose the campaign for your approval before launching anything.`,
     toolCalls: [],
   }
 }
 
-// ── Main agent loop ───────────────────────────────────────────────────────────
+// ── Main agent loop (Gemini function-calling agentic loop) ────────────────────
 
 export async function runAgent(sessionId: string, userMessage: string): Promise<{
   response: string
   toolCalls: Array<{ tool: string; input: any; result: any }>
 }> {
-  // Demo mode: use scripted responses — no Anthropic API key needed
-  if (DEMO_MODE || !process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === 'demo-key-not-needed') {
-    log.info({ sessionId, DEMO_MODE }, 'Running in demo mode (mocked AI responses)')
+  if (DEMO_MODE || !process.env.GEMINI_API_KEY) {
+    log.info({ sessionId, DEMO_MODE }, 'Running in demo mode')
     const result = await runDemoAgent(userMessage)
     await db.insert(agentConversations).values([
       { sessionId, role: 'user', content: userMessage },
@@ -351,70 +339,55 @@ export async function runAgent(sessionId: string, userMessage: string): Promise<
     return result
   }
 
-  // Production mode: real Claude Sonnet 4.6 with tool use
+  // Production mode: Gemini 2.0 Flash with function calling
+  const model = gemini!.getGenerativeModel({
+    model: 'gemini-2.0-flash',
+    systemInstruction: SYSTEM_PROMPT,
+    tools: [{ functionDeclarations: TOOLS }],
+  })
+
+  // Load conversation history
   const history = await db.select().from(agentConversations)
     .where(eq(agentConversations.sessionId, sessionId))
     .orderBy(agentConversations.createdAt)
 
-  const messages: Anthropic.MessageParam[] = history.map(h => ({
-    role: h.role as 'user' | 'assistant',
-    content: h.content,
+  const chatHistory = history.map(h => ({
+    role: h.role === 'assistant' ? 'model' : 'user' as const,
+    parts: [{ text: h.content }],
   }))
-  messages.push({ role: 'user', content: userMessage })
 
+  const chat = model.startChat({ history: chatHistory })
   const toolCalls: Array<{ tool: string; input: any; result: any }> = []
 
-  let response = await anthropic!.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 4096,
-    system: `You are the Campaign Copilot for Luxe Fashion — an AI marketing agent.
+  let result = await chat.sendMessage(userMessage)
+  let response = result.response
 
-Your job is to help the marketing team reach their shoppers intelligently. You can:
-- Build precise customer segments from natural language
-- Simulate campaign performance before launch
-- Create campaigns (always in DRAFT, user must approve before launch)
-- Analyse customer behaviour and surface insights
-- Recommend next best actions
+  // Agentic loop — keep executing tools until model stops calling them
+  while (response.functionCalls()?.length) {
+    const calls = response.functionCalls()!
+    const toolResults = []
 
-Brand context: Luxe Fashion is a premium D2C fashion brand in India. Main channels: WhatsApp (best engagement), SMS, Email. Customers range from VIP high-spenders to at-risk churners.
+    for (const call of calls) {
+      log.info({ tool: call.name, sessionId }, 'Gemini tool call')
+      const toolResult = await executeTool(call.name, call.args)
+      toolCalls.push({ tool: call.name, input: call.args, result: toolResult })
+      toolResults.push({
+        functionResponse: {
+          name: call.name,
+          response: { content: JSON.stringify(toolResult) },
+        },
+      })
+    }
 
-Always:
-1. Check existing segments before creating new ones
-2. Run simulation before suggesting a campaign
-3. Show guardrail results (suppression, frequency cap) transparently
-4. Present campaigns as proposals — never launch without explicit user approval
-5. Be concise and actionable. Use numbers and ₹ amounts to make the impact real.`,
-    messages,
-    tools: TOOLS,
-  })
-
-  while (response.stop_reason === 'tool_use') {
-    const toolUseBlock = response.content.find(b => b.type === 'tool_use') as Anthropic.ToolUseBlock
-    const toolResult = await executeTool(toolUseBlock.name, toolUseBlock.input)
-
-    toolCalls.push({ tool: toolUseBlock.name, input: toolUseBlock.input, result: toolResult })
-    log.info({ tool: toolUseBlock.name, sessionId }, 'AI agent tool call')
-
-    messages.push({ role: 'assistant', content: response.content })
-    messages.push({
-      role: 'user',
-      content: [{ type: 'tool_result', tool_use_id: toolUseBlock.id, content: JSON.stringify(toolResult) }],
-    })
-
-    response = await anthropic!.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      system: messages[0]?.role === 'user' ? undefined : (messages.shift() as any)?.content,
-      messages,
-      tools: TOOLS,
-    })
+    result = await chat.sendMessage(toolResults)
+    response = result.response
   }
 
-  const finalText = response.content.find(b => b.type === 'text')?.text ?? ''
+  const finalText = response.text()
 
   await db.insert(agentConversations).values([
     { sessionId, role: 'user', content: userMessage },
-    { sessionId, role: 'assistant', content: finalText, metadata: { toolCalls: toolCalls.length } },
+    { sessionId, role: 'assistant', content: finalText, metadata: { toolCalls: toolCalls.length, model: 'gemini-2.0-flash' } },
   ])
 
   return { response: finalText, toolCalls }
